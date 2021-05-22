@@ -1,0 +1,187 @@
+---
+title: "Prediction Assignment Writeup"
+author: "Bradley Burquest"
+date: "5/21/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+For this Prediction Assignment, we need to predict "how well" a exercise activity was done. The exercise activity to be determined is the sample bicep curl. The data was collect from several people wearing sensors arm, hip, dumbbell, and forearm. There are 5 classes (in the classe variable/outcome) that describe how well an activity was performed.
+
+
+## Implementation
+
+### The Approach
+
+The approach is to use the training data to train 3 separate models that will be made using different methods. The chosen model methods are 'rf' (random forest), 'gbm' (gradient boosting), and 'lda'(linear discriminant analysis). These models will be trained and tested. The model with the highest accuracy and low RMSE (root mean square error) will be used to predict the finaltest HAR classes. 
+
+#### Load the Data
+
+Load the data from the source on the internet.
+```{r message=FALSE}
+library(caret)
+library(gbm)
+library(dplyr)
+
+set.seed(2112)
+# Load the data from the web
+training <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+finaltest <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+
+dim(training)
+dim(finaltest)
+
+```
+
+There are 160 variables and 19622 rows in the training data. The finaltest set has 160 variables and 20 rows. The finaltest data is to be used to test the accuracy of the model class predictions for this data. The predicted classes are to be used to answer the assignment quiz questions (not shown in this document). 
+
+A quick look at the data shows there are many columns that contain NA values or have extremely incomplete data. The data needs be cleaned-up before fitting the models. The same changes made to the training data must also be made to the finaltest data or test data.
+
+Here the NA columns are removed and the first 7 columns of the resulting dataset are also removed as they are not significant. 
+```{r}
+# Get rid of columns that contain NA in the testing set because they are not useful
+val_na_cols <-  finaltest %>% select_if(~any(is.na(.)))
+# remove the NA columns from the final test data and training data
+finalData <- finaltest %>% select(-colnames(val_na_cols))
+# Remove the same NA testing columns from the training set
+trainData <- training %>% select(-colnames(val_na_cols))
+# Remove the first seven columns as they not significant
+trainData <- subset(trainData, select=-c(1:7))
+finalData <- subset(finalData, select=-c(1:7))
+# convert the classe variable to a factor
+trainData$classe <- as.factor(trainData$classe)
+
+print(str(trainData))
+
+```
+
+The resulting dataset has been simplified down to `r dim(trainData)[2]` variables of significant sensor data and is ready to be split into training and test sets for model training and testing purposes.
+
+```{r}
+# Create partition indexes
+inTrain <- createDataPartition(y=training$classe, p=0.75, list=FALSE)
+
+# Create a training data set and testing data set
+testData <- trainData[-inTrain,]
+trainData <- trainData[inTrain,]
+
+# resulting data sets
+dim(trainData)
+dim(testData)
+```
+The test data is broken into two parts, trainData (75%) and testData (25%). 
+
+
+### Train the models
+
+The approach is to train several models (random forest, gbm, lda) using popular methods and pick the best on based on accuracy. The first model we are going to use is the random forest 'rf' method. We are using the trainControl for the models to perform K-fold of 10 and repeats this 1 time during training. 
+
+
+#### Random Forest
+The first model to build is the random forest method. This training method can take a long time to complete.
+```{r message=FALSE}
+
+set.seed(1859)
+
+# Do 10 folds and repeat 1 time
+control <- trainControl(method='cv', 
+                        number=10)
+#Number randomly variable selected is mtry
+mtry <- sqrt(ncol(testData)-1)
+tunegrid <- expand.grid(.mtry=mtry)
+
+start <- Sys.time()
+modRF <- train(classe~.,
+                    data=trainData,
+                    method='rf',
+                    metric='Accuracy',
+                    tuneGrid=tunegrid,
+                    trControl=control)
+predRF <- predict( modRF, newdata=testData)
+cm1 <- confusionMatrix(predRF, testData$classe )
+print( paste( "RF accuracy: ", cm1$overall[1]))
+rmse_rf <- RMSE(as.numeric(predRF), as.numeric(testData$classe))
+print(rmse_rf)
+```
+This model has excellent accuracy of `r cm1$overall[1]` and a low RMSE of `r rmse_rf`. This model is a good candidate for the final predictions. 
+
+#### GBM (Gradient Boosting Machine)
+
+The GBM method will be used to generate a model from the trainData. 
+```{r message=FALSE}
+modGBM <- train(classe~., 
+                 data=trainData, 
+                 method='gbm', 
+                 metric='Accuracy', 
+                 trControl=control,
+                 verbose=FALSE)
+predGBM <- predict( modGBM, newdata=testData)
+cm2 <- confusionMatrix(predGBM, testData$classe )
+print( paste( "GMB accuracy: ", cm2$overall[1]))
+rmse_gbm <- RMSE(as.numeric(predGBM), as.numeric(testData$classe))
+print( rmse_gbm)
+```
+This model also has great accuracy of `r cm2$overall[1]` and RMSE of `r rmse_gbm` could be better. This model is another good candidate for the final predictions.
+
+
+#### LDA (Linear Discriminent Analysis)
+
+The final model to used for the thrid method is the LDA model. 
+
+```{r message=FALSE}
+modLDA <-train(classe~., 
+               data=trainData, 
+               method='lda', 
+               metric='Accuracy', 
+               trControl=control)
+predLDA <- predict( modLDA, newdata=testData)
+cm3 <- confusionMatrix(predLDA, testData$classe )
+print( paste( "LBA accuracy:", cm3$overall[1]))
+rmse_lda <- RMSE(as.numeric(predLDA), as.numeric(testData$classe))
+print(rmse_lda)
+```
+This model has an accuracy is `r cm3$overall[1]` which is much worse then the other two models. This model will not be used in the finaltest predictions.
+
+
+## Results
+
+#### Out-of-sample error and Accuracy
+
+The out-of-sample error will give some measure of the effectiveness of the model on data not seen before.
+
+```{r}
+# create a comparison data frame
+oose <- data.frame(c("RF","GBM","LDA"),c(rmse_rf, rmse_gbm, rmse_lda),c(cm1$overall[1], cm2$overall[1], cm3$overall[1]))
+colnames(oose) <- c("Method","RMSE","Accuracy")
+
+print("Model Comparison")
+print(oose)
+
+```
+
+The above table shows the out-of-sample error lowest for the RF or random forest model. The RMSE error for RF model is 0.08 which is better than the 0.26 RMSE for the GBM method
+
+#### Cross Validation
+
+The random forest (rf) method doesn't require separate cross validation because in the k-fold process, cross validation is inherent in the method. 
+
+#### Model Selection
+The GBM and Random Forest models are very accurate and either can be used in the finaltest predictions but the Random Forest method is better based on RMSE alone. They both correctly produce the same set of predictions (which will not be shown here) from the finalData test set. 
+
+The random forest model has the highest accuracy and the lowest RMSE error rate of the three models created to make the predictions. 
+
+The model with the highest accuracy, the Random Forest (rf), produces the correct prediction result. The gbm model also produces the correct prediction result. Comparing the two results from rf and gbm methods produces the sames predictions, as is shown below, but the RF model has better RMSE on unseen data.
+```{r}
+rffinal <- predict(modRF, newdata=finalData)
+gbmfinal <- predict(modGBM, newdata=finalData)
+
+## See that these have equal predictions
+print("The models produce the same results on the final test set")
+print(rffinal==gbmfinal)
+
+```
